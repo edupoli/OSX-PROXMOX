@@ -156,8 +156,6 @@ if [ ! -e /etc/pve/qemu-server/.osx-proxmox ]; then
 
 fi
 
-
-
 create_vm() {
     clear
     echo " "
@@ -373,4 +371,206 @@ while [ true ]; do
             echo "Invalid input. Please enter a number."
             ;;
     esac
+
+if [ "${OPT}" -eq 200 ]; then
+    clear
+    LOGFILE=${LOGDIR}/add-repo-pve-no-subscription.log
+    echo " "
+    echo "Adding 'Proxmox VE NO Subscription repository' ..."
+    echo " "
+    echo "Please wait ..."
+    echo " "
+
+    if [ $(pveversion | grep "pve-manager/[7]" | wc -l) -ne 1 ]; then
+        echo "deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription" > /etc/apt/sources.list.d/pxve-no-sub.list
+    elif [ $(pveversion | grep "pve-manager/[8]" | wc -l) -ne 1 ]; then
+        echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/pxve-no-sub.list
+    else
+        echo "Unsupported Proxmox VE version. Please use version 7.XX or 8.0-2."
+        exit
+    fi
+
+    apt update -y >> ${LOGFILE} 2>> ${LOGFILE}
+    if [ $? -ne 0 ]; then
+        echo "apt update error - check log file ${LOGFILE}"
+        exit
+    fi
+    echo "Proxmox VE NO Subscription repository has been successfully added."
+    exit
+fi
+
+if [ "${OPT}" -eq 201 ]; then
+    clear
+    LOGFILE=${LOGDIR}/update-opencore-iso.log
+    echo " "
+    echo "Copying 'opencore-osx-proxmox-vm.iso' to '/var/lib/vz/template/iso'"
+    echo " "
+    cd /var/lib/vz/template/iso/ > ${LOGFILE} 2>> ${LOGFILE} || exit
+    rm -f opencore-osx-proxmox-vm.iso >> ${LOGFILE} 2>> ${LOGFILE}
+    wget https://github.com/luchina-gabriel/OSX-PROXMOX/raw/main/EFI/opencore-osx-proxmox-vm.iso >> ${LOGFILE} 2>> ${LOGFILE}
+    cd ~ || exit
+    echo "Please wait ..."
+    echo "Copy of 'opencore-osx-proxmox-vm.iso' completed!"
+    echo " "
+    exit
+fi
+
+if [ "${OPT}" -eq 202 ]; then
+    clear
+    echo " "
+    echo "Clearing all macOS Recovery Images in '/var/lib/vz/template/iso'"
+    echo " "
+    rm -f /var/lib/vz/template/iso/recovery-*.iso
+    rm -f ${LOGDIR}/crt-recovery-*.log
+    echo "Please wait ..."
+    echo "Clearing of ALL macOS Recovery Images completed!"
+    echo " "
+    exit
+fi
+
+if [ "${OPT}" -eq 203 ]; then
+    clear
+    echo " "
+    echo "Removing Proxmox Subscription Notice..."
+    echo " "
+    sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js && systemctl restart pveproxy.service
+    echo "Please wait ..."
+    echo "Removal of Proxmox Subscription Notice completed!"
+    echo " "
+    exit
+fi
+
+if [ "${OPT}" -eq 204 ]; then
+    clear
+    LOGFILE=${LOGDIR}/activate-macOS-in-cloud-vultr.log
+    echo " "
+    echo "Enabling macOS in Cloud (VultR Provider)"
+    echo " "
+    echo "Please wait ..."
+    echo " "
+    echo -e "\n## Interface for VMs \nauto vmbr1
+    iface vmbr1 inet static
+        address  192.168.1.1
+        netmask  255.255.255.0
+        bridge_ports none
+        bridge_stp off
+        bridge_fd 0
+    \n
+    post-up echo 1 > /proc/sys/net/ipv4/ip_forward
+    post-up   iptables -t nat -A POSTROUTING -s '192.168.1.0/24' -o vmbr0 -j MASQUERADE
+    post-down iptables -t nat -D POSTROUTING -s '192.168.1.0/24' -o vmbr0 -j MASQUERADE" >> /etc/network/interfaces
+
+    ifup vmbr1 >> ${LOGFILE} 2>> ${LOGFILE}
+
+    apt -y update >> ${LOGFILE} 2>> ${LOGFILE}
+    apt -y install sysstat net-tools isc-dhcp-server >> ${LOGFILE} 2>> ${LOGFILE}
+
+    sed -i 's/INTERFACESv4=""/INTERFACESv4="vmbr1"/g' /etc/default/isc-dhcp-server
+
+    cp /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.backup
+
+    echo 'subnet 192.168.1.0 netmask 255.255.255.0 {
+      range 192.168.1.10 192.168.1.100;
+      option routers 192.168.1.1;
+      option subnet-mask 255.255.255.0;
+      default-lease-time 600;
+      max-lease-time 7200;
+      ddns-update-style none;
+      authoritative;
+      option domain-name-servers 8.8.8.8,8.8.4.4;
+      option domain-name "local";
+    }' > /etc/dhcp/dhcpd.conf
+
+    echo " "
+    echo "Enablement of macOS in Cloud (VultR Provider) completed!"
+    echo " "
+    echo "Your server will reboot in 5 seconds."
+
+    sleep 5s && reboot
+fi
+
+if [ "${OPT}" -eq 205 ]; then
+    clear
+    LOGFILE=${LOGDIR}/custom-oc-config.plist.log
+    echo " "
+    echo "Customize Opencore config.plist"
+    echo " "
+    LOOPDEV=$(losetup -f --show -P ${ISODIR}/opencore-osx-proxmox-vm.iso 2>> ${LOGFILE})
+
+    mkdir -p /mnt/opencore > ${LOGFILE} 2>> ${LOGFILE}
+    mount "${LOOPDEV}"p1 /mnt/opencore >> ${LOGFILE} 2>> ${LOGFILE}
+
+    if [ ! -e /mnt/opencore/EFI/OC/config.plist.backup ]; then
+        cp -v /mnt/opencore/EFI/OC/config.plist /mnt/opencore/EFI/OC/config.plist.backup >> ${LOGFILE} 2>> ${LOGFILE}
+    fi
+
+    PREV_LANG=$(grep -E '..-..:0' /mnt/opencore/EFI/OC/config.plist | sed -e 's/.*\(..-..\).*/\1/')
+    BOOT_ARGS=$(grep '<key>boot-args' /mnt/opencore/EFI/OC/config.plist -A1 | tail -n1 | sed -e 's/.*>\(.*\)<.*/\1/')
+    TIMEOUT=$(grep -A1 '>Timeout<' /mnt/opencore/EFI/OC/config.plist | tail -n1 | sed -e 's/.*>\(.*\)<.*/\1/')
+
+    echo " "
+    echo -n "Enter language-country code [or ENTER to keep the current one (${PREV_LANG})]: "
+    read NEW_PREV_LANG
+    if [ -z "${NEW_PREV_LANG}" ]; then NEW_PREV_LANG=${PREV_LANG}; fi;
+    sed -i -e "s/..-..:0/${NEW_PREV_LANG}:0/" /mnt/opencore/EFI/OC/config.plist >> ${LOGFILE} 2>> ${LOGFILE}
+
+    echo " "
+    echo -n "Enter boot-args [or ENTER to keep the current one (${BOOT_ARGS})]: "
+    read NEW_BOOT_ARGS
+    if [ -z "${NEW_BOOT_ARGS}" ]; then NEW_BOOT_ARGS=${BOOT_ARGS}; fi;
+    sed -i -e "s/${BOOT_ARGS}/${NEW_BOOT_ARGS}/" /mnt/opencore/EFI/OC/config.plist >> ${LOGFILE} 2>> ${LOGFILE}
+
+    echo " "
+    echo -n "Remove csr-active-config (unlock SIP configuration) [Y/N] [or ENTER for Default: N]: "
+    read RM_CSR_LOCK
+    if [ -z "${RM_CSR_LOCK}" ]; then RM_CSR_LOCK="N"; fi;
+
+    if [ "${RM_CSR_LOCK}" == "Y" ] || [ "${RM_CSR_LOCK}" == "y" ]; then
+        echo "--- a/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:43:16.000000000 +0100
+    +++ b/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:45:24.000000000 +0100
+    @@ -450,2 +450,0 @@
+    -				<key>csr-active-config</key>
+    -				<data>AAAAAA==</data>
+    " > ${TMPDIR}/rm-csr-lock.patch
+        cd /
+        patch -p1 < /root/OSX-PROXMOX/tmp/rm-csr-lock.patch >> ${LOGFILE} 2>> ${LOGFILE}
+        cd ${SCRIPT_DIR} || exit
+        rm -f ${TMPDIR}/rm-csr-lock.patch
+        echo "You can now use \`csrutil disable\` and \`csrutil authenticated-root disable\` in Recovery OS to disable SIP!"
+    fi
+
+    echo " "
+    echo -n "Enter timeout [or ENTER to keep the current one (${TIMEOUT} seconds)]: "
+    read NEW_TIMEOUT
+    if [ -z "${NEW_TIMEOUT}" ]; then NEW_TIMEOUT=${TIMEOUT}; fi;
+
+    if [ "${NEW_TIMEOUT}" -ne "${TIMEOUT}" ]; then
+        echo "--- a/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:43:16.000000000 +0100
+    +++ b/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:45:24.000000000 +0100
+    @@ -363,7 +363,7 @@
+             <key>TakeoffDelay</key>
+             <integer>0</integer>
+             <key>Timeout</key>
+    -			<integer>${TIMEOUT}</integer>
+    +			<integer>${NEW_TIMEOUT}</integer>
+         </dict>
+         <key>Debug</key>
+         <dict>
+    " > ${TMPDIR}/timeout.patch
+        cd /
+        patch -p1 < /root/OSX-PROXMOX/tmp/timeout.patch >> ${LOGFILE} 2>> ${LOGFILE}
+        cd ${SCRIPT_DIR} || exit
+        rm -f ${TMPDIR}/timeout.patch
+    fi
+
+    diff -u --color /mnt/opencore/EFI/OC/config.plist.backup /mnt/opencore/EFI/OC/config.plist
+
+    umount /mnt/opencore >> ${LOGFILE} 2>> ${LOGFILE}
+    rmdir /mnt/opencore
+    losetup -d "${LOOPDEV}" >> ${LOGFILE} 2>> ${LOGFILE}
+fi
+
+if [ "${OPT}" -eq 0 ]; then
+    exit
+fi
 done
