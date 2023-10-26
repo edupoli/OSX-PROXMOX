@@ -26,24 +26,19 @@
 # Credits:
 # https://github.com/acidanthera/OpenCorePkg
 # https://github.com/corpnewt/MountEFI
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
+#!/bin/bash
 
 clear
 
-if [ `pveversion | grep "pve-manager/[7,8]" | wc -l` -ne 1 ]
-then
-	echo "This version of Proxmox Virtual Environment are not supported"
-	echo "Please, utilize version: 7.XX or 8.0-2"
-	exit
+# Check Proxmox version
+pve_version=$(pveversion | grep "pve-manager/[7,8]" | wc -l)
+if [ "$pve_version" -ne 1 ]; then
+    echo "This version of Proxmox Virtual Environment is not supported"
+    echo "Please use version: 7.XX or 8.0-2"
+    exit
 fi
 
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
+# Define script variables
 SCRIPT_DIR=/root/OSX-PROXMOX
 LOGDIR=${SCRIPT_DIR}/logs
 TMPDIR=${SCRIPT_DIR}/tmp
@@ -53,1781 +48,329 @@ OCVERSION="0.9.5"
 DEFAULT_VM_PREFIX="HACK-"
 DEFAULT_RAM_SIZE=4096
 
-if [ `lscpu | grep "Vendor ID" | grep -i amd | wc -l` -eq 1 ]; then OSX_PLATFORM="AMD"; else OSX_PLATFORM="INTEL"; fi
 
-if [ ! -e ${TMPDIR} ]; then mkdir ${TMPDIR}; fi;
-if [ ! -e ${LOGDIR} ]; then mkdir ${LOGDIR}; fi;
 
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
+# Declare arrays for macOS versions and menu options
+macOS_versions=("High_Sierra" "Mojave" "Catalina" "Big_Sur" "Monterey" "Ventura" "Sonoma")
+menu_description=("macOS High Sierra - 10.13 (please use ISO for install)" 
+              "macOS Mojave - 10.14" 
+              "macOS Catalina - 10.15" 
+              "macOS Big Sur - 11" 
+              "macOS Monterey - 12" 
+              "macOS Ventura - 13" 
+              "macOS Sonoma - 14")
 
-if [ ! -e /etc/pve/qemu-server/.osx-proxmox ]
-then
-	
-	mkdir -p ${LOGDIR}
+# Declare an associative array to map macOS versions to parameters
+declare -A macOS_params
 
-	LOGFILE=${LOGDIR}/prerequisites-setup.log
-	
-	echo " "
-	echo "OSX-PROXMOX (Version ${HACKPXVERSION}) - GABRIEL LUCHINA - https://osx-proxmox.com"
-	echo " "
-	echo "Prerequisites have not yet been installed and configured on this HOST."
-	echo " "
-	echo "Running the prerequisites and at the end your HOST will be rebooted ..."
-	echo " "
-	echo " "
+macOS_params["High_Sierra"]="-b Mac-BE088AF8C5EB4FA2 -m 00000000000J80300 download"
+macOS_params["Mojave"]="-b Mac-7BA5B2DFE22DDD8C -m 00000000000KXPG00 download"
+macOS_params["Catalina"]="-b Mac-00BE6ED71E35EB86 -m 00000000000000000 download"
+macOS_params["Big_Sur"]="-b Mac-42FD25EABCABB274 -m 00000000000000000 download"
+macOS_params["Monterey"]="-b Mac-E43C1C25D4880AD6 -m 00000000000000000 download"
+macOS_params["Ventura"]="-b Mac-B4831CEBD52A0C4C -m 00000000000000000 download"
+macOS_params["Sonoma"]="-b Mac-A61BADE1FDAD7B05 -m 00000000000000000 download"
 
-	cp ${SCRIPT_DIR}/EFI/*.iso /var/lib/vz/template/iso
 
-	echo "alias osx-setup='${SCRIPT_DIR}/setup'" >> /root/.bashrc
+# Determine the OSX_PLATFORM
+if [ $(lscpu | grep "Vendor ID" | grep -i amd | wc -l) -eq 1 ]; then
+    OSX_PLATFORM="AMD"
+else
+    OSX_PLATFORM="INTEL"
+fi
 
-	echo -e "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8" > /etc/environment
-	echo "set mouse-=a" > ~/.vimrc
+# Create necessary directories
+mkdir -p ${LOGDIR}
+[ ! -e ${TMPDIR} ] && mkdir ${TMPDIR}
 
-	if [ -e /etc/apt/sources.list.d/pve-enterprise.list ]; then rm -rf /etc/apt/sources.list.d/pve-enterprise.list; fi;
+# Check if prerequisites have been installed and configured
+if [ ! -e /etc/pve/qemu-server/.osx-proxmox ]; then
 
-	apt-get update > ${LOGFILE} 2>> ${LOGFILE}
+    LOGFILE=${LOGDIR}/prerequisites-setup.log
 
-	if [ $? -ne 0 ]
-	then 
-		echo "Error with 'apt-get update' ..."
-		echo "Trying to change /etc/apt/sources.list"
+    echo " "
+    echo "OSX-PROXMOX (Version ${HACKPXVERSION}) - GABRIEL LUCHINA - https://osx-proxmox.com"
+    echo " "
+    echo "Prerequisites have not yet been installed and configured on this HOST."
+    echo " "
+    echo "Running the prerequisites and at the end your HOST will be rebooted ..."
+    echo " "
+    echo " "
 
-		sed -i 's/ftp.br.debian.org/ftp.debian.org/g' /etc/apt/sources.list
-		
-		echo "Retrying 'apt-get update'"
-		apt-get update >> ${LOGFILE} 2>> ${LOGFILE}
-		if [ $? -ne 0 ]; then echo "Error with `apt-get update ...`"; exit; fi
-	fi
+    cp ${SCRIPT_DIR}/EFI/*.iso /var/lib/vz/template/iso
+    echo "alias osx-setup='${SCRIPT_DIR}/setup'" >> /root/.bashrc
+    echo -e "LANG=en_US.UTF-8\nLC_ALL=en_US.UTF-8" > /etc/environment
+    echo "set mouse-=a" > ~/.vimrc
 
-	apt install vim unzip zip sysstat parted wget iptraf git htop -y >> ${LOGFILE} 2>> ${LOGFILE}
-	if [ $? -ne 0 ]; then echo "Error with `apt-get install ...`"; exit; fi
+    # Remove pve-enterprise repository
+    [ -e /etc/apt/sources.list.d/pve-enterprise.list ] && rm -rf /etc/apt/sources.list.d/pve-enterprise.list
 
-	sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/g' /etc/default/grub
+    # Update apt-get and install required packages
+    apt-get update > ${LOGFILE} 2>> ${LOGFILE} || (sed -i 's/ftp.br.debian.org/ftp.debian.org/g' /etc/apt/sources.list && apt-get update >> ${LOGFILE} 2>> ${LOGFILE})
+    apt install vim unzip zip sysstat parted wget iptraf git htop -y >> ${LOGFILE} 2>> ${LOGFILE} || exit
 
-	if [ ${OSX_PLATFORM} == "AMD" ]
-	then
-		if [ `pveversion | grep -i '7.2\|7.3\|7.4\|8.0' | wc -l` -eq 1 ]
-		then
-			sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=on iommu=pt video=vesafb:off video=efifb:off initcall_blacklist=sysfb_init"/g' /etc/default/grub
-		else
-			sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=on iommu=pt video=vesafb:off video=efifb:off"/g' /etc/default/grub
-		fi
-		echo "options kvm-amd nested=1" > /etc/modprobe.d/kvm-amd.conf
-	fi
+    # Configure GRUB
+    sed -i 's/GRUB_TIMEOUT=5/GRUB_TIMEOUT=0/g' /etc/default/grub
 
-	if [ ${OSX_PLATFORM} == "INTEL" ]
-	then
-		if [ `pveversion | grep -i '7.2\|7.3\|7.4\|8.0' | wc -l` -eq 1 ]
-		then
-			sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt video=vesafb:off video=efifb:off initcall_blacklist=sysfb_init"/g' /etc/default/grub
-		else
-			sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt video=vesafb:off video=efifb:off"/g' /etc/default/grub
-		fi
-		echo "options kvm-intel nested=Y" > /etc/modprobe.d/kvm-intel.conf
-	fi
+    # Configure GRUB_CMDLINE_LINUX_DEFAULT based on the platform
+    if [ ${OSX_PLATFORM} == "AMD" ]; then
+        options="amd_iommu=on iommu=pt video=vesafb:off video=efifb:off"
+        if [ $(pveversion | grep -i '7.2\|7.3\|7.4\|8.0' | wc -l) -eq 1 ]; then
+            options="${options} initcall_blacklist=sysfb_init"
+        fi
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet '"${options}"'"/g' /etc/default/grub
+        echo "options kvm-amd nested=1" > /etc/modprobe.d/kvm-amd.conf
+    elif [ ${OSX_PLATFORM} == "INTEL" ]; then
+        options="intel_iommu=on iommu=pt video=vesafb:off video=efifb:off"
+        if [ $(pveversion | grep -i '7.2\|7.3\|7.4\|8.0' | wc -l) -eq 1 ]; then
+            options="${options} initcall_blacklist=sysfb_init"
+        fi
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="quiet '"${options}"'"/g' /etc/default/grub
+        echo "options kvm-intel nested=Y" > /etc/modprobe.d/kvm-intel.conf
+    fi
 
-	echo -e "vfio\nvfio_iommu_type1\nvfio_pci\nvfio_virqfd\n" >> /etc/modules
-	echo -e "blacklist nouveau\nblacklist nvidia\nblacklist snd_hda_codec_hdmi\nblacklist snd_hda_intel\nblacklist snd_hda_codec\nblacklist snd_hda_core\nblacklist radeon\nblacklist amdgpu\n" >> /etc/modprobe.d/pve-blacklist.conf
+    # Add modules and blacklist unnecessary ones
+    echo -e "vfio\nvfio_iommu_type1\nvfio_pci\nvfio_virqfd\n" >> /etc/modules
+    echo -e "blacklist nouveau\nblacklist nvidia\nblacklist snd_hda_codec_hdmi\nblacklist snd_hda_intel\nblacklist snd_hda_codec\nblacklist snd_hda_core\nblacklist radeon\nblacklist amdgpu\n" >> /etc/modprobe.d/pve-blacklist.conf
+    echo "options kvm ignore_msrs=Y report_ignored_msrs=0" > /etc/modprobe.d/kvm.conf
+    echo "options vfio_iommu_type1 allow_unsafe_interrupts=1" > /etc/modprobe.d/iommu_unsafe_interrupts.conf
 
-	echo "options kvm ignore_msrs=Y report_ignored_msrs=0" > /etc/modprobe.d/kvm.conf
-	echo "options vfio_iommu_type1 allow_unsafe_interrupts=1" > /etc/modprobe.d/iommu_unsafe_interrupts.conf
+    # Disable no subscription notice
+    sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
 
-	sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+    # Create a marker file to indicate that prerequisites have been set up
+    touch /etc/pve/qemu-server/.osx-proxmox
 
-	touch /etc/pve/qemu-server/.osx-proxmox
+    # Update GRUB and initiate reboot
+    update-grub >> ${LOGFILE} 2>> ${LOGFILE}
 
-	update-grub >> ${LOGFILE} 2>> ${LOGFILE}
+    echo " "
+    echo " "
+    echo "... Successfully completed prerequisite setup, your HOST will restart within 15s."
+    echo " "
+    echo "After rebooting, RUN: osx-setup"
+    echo " "
+    echo " "
 
-	echo " "
-	echo " "
-	echo "... Successfully completed prerequisite process, your HOST will restart within 15s."
-	echo " "
-	echo "After rebooting, RUN: osx-setup"
-	echo " "
-	echo " "
-
-	sleep 15s && reboot
+    sleep 15s && reboot
 
 fi
 
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-while [ true ]
-do
-
-	NEXTID=`pvesh get /cluster/nextid`
-
-	clear
-	echo "#######################################################"
-	echo "################ O S X - P R O X M O X ################"
-	echo "############### https://osx-proxmox.com ###############"
-	echo "################ version: ${HACKPXVERSION} ################"
-	echo "#######################################################"
-	echo " "
-	echo " Enter the macOS version to be installed:"
-	echo " "
-	echo " 1 - macOS High Sierra - 10.13 (please use ISO for install)"
-	echo " 2 - macOS Mojave - 10.14"
-	echo " 3 - macOS Catalina - 10.15"
-	echo " 4 - macOS Big Sur - 11"
-	echo " 5 - macOS Monterey - 12"
-	echo " 6 - macOS Ventura - 13"
-	echo " 7 - macOS Sonoma - 14"
-	echo " "
-	echo " Next VM ID: ${NEXTID}"
-	echo " Opencore version: ${OCVERSION}"
-	echo " "
-	echo " 200 - Add Promox VE NO Subscription repository"
-	echo " 201 - Update Opencore ISO"
-	echo " 202 - Clear ALL macOS Recovery Images"
-	echo " 203 - Remove Proxmox Subscription Notice"
-	echo " 204 - Enable macOS in Cloud (VultR Provider)"
-	echo " 205 - Customize Opencore config.plist"
-	echo " "
-	echo " 0 - Quit (or press ENTER only)"
-	echo " "
-	echo -n " Option: "
-	read OPT
-
-	if [ -z $OPT ]
-	then
-		exit
-	fi
-
-	## Regular Expression for check integer number in size disk
-	re='^[0-9]+$'
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS High Sierra - 10.13
-
-	if [ ${OPT} -eq 1 ]
-	then
-		clear
-		echo " "
-		echo "macOS High Sierra"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-HIGHSIERRA]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}HIGHSIERRA"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "
-			echo "Downloading and creating the recovery image for installation ..."
-			
-			LOGFILE=${LOGDIR}/crt-recovery-highsierra.log
-
-			if [ ! -e ${ISODIR}/recovery-highsierra.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-highsierra.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-highsierra.iso -n HIGHSIERRA >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-highsierra.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-BE088AF8C5EB4FA2 -m 00000000000J80300 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-highsierra.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS High Sierra already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - High Sierra ..."
-		
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-highsierra.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;sata0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - High Sierra' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--sata0 ${STORAGECRTVM}:${SIZEDISK},cache=none,ssd=1,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-highsierra.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-highsierra.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;sata0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - High Sierra' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--sata0 ${STORAGECRTVM}:${SIZEDISK},cache=none,ssd=1,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-highsierra.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Mojave - 10.14
-	
-	if [ ${OPT} -eq 2 ]
-	then
-		clear
-		echo " "
-		echo "macOS Mojave"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-MOJAVE]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}MOJAVE"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "
-			echo "Downloading and creating the recovery image for installation ..."
-
-			LOGFILE=${LOGDIR}/crt-recovery-mojave.log
-
-			if [ ! -e ${ISODIR}/recovery-mojave.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-mojave.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-mojave.iso -n MOJAVE >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-mojave.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-7BA5B2DFE22DDD8C -m 00000000000KXPG00 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-mojave.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Mojave already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Mojave ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-mojave.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;sata0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Mojave' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--sata0 ${STORAGECRTVM}:${SIZEDISK},cache=none,ssd=1,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-mojave.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-mojave.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;sata0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Mojave' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--sata0 ${STORAGECRTVM}:${SIZEDISK},cache=none,ssd=1,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-mojave.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Catalina - 10.15
-
-	if [ ${OPT} -eq 3 ]
-	then
-		clear
-		echo " "
-		echo "macOS Catalina"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-CATALINA]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}CATALINA"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "		
-			echo "Downloading and creating the recovery image for installation ..."
-
-			LOGFILE=${LOGDIR}/crt-recovery-catalina.log
-
-			if [ ! -e ${ISODIR}/recovery-catalina.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-catalina.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-catalina.iso -n CATALINA >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-catalina.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-00BE6ED71E35EB86 -m 00000000000000000 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-catalina.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Catalina already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Catalina ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-catalina.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Catalina' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			 --ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-catalina.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-catalina.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Catalina' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-catalina.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Big Sur - 11
-
-	if [ ${OPT} -eq 4 ]
-	then
-		clear
-		echo " "
-		echo "macOS Big Sur"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-BIGSUR]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}BIG-SUR"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "		
-			echo "Downloading and creating the recovery image for installation ..."
-			
-			LOGFILE=${LOGDIR}/crt-recovery-bigsur.log
-
-			if [ ! -e ${ISODIR}/recovery-bigsur.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-bigsur.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-bigsur.iso -n BIGSUR >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-bigsur.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-42FD25EABCABB274 -m 00000000000000000 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-bigsur.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Big Sur already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Big Sur ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-bigsur.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Big Sur' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-bigsur.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-bigsur.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Big Sur' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-bigsur.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Monterey - 12
-
-	if [ ${OPT} -eq 5 ]
-	then
-		clear
-		echo " "
-		echo "macOS Monterey"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-MONTEREY]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}MONTEREY"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "		
-			echo "Downloading and creating the recovery image for installation ..."
-			
-			LOGFILE=${LOGDIR}/crt-recovery-monterey.log
-
-			if [ ! -e ${ISODIR}/recovery-monterey.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-monterey.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-monterey.iso -n MONTEREY >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-monterey.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-E43C1C25D4880AD6 -m 00000000000000000 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-monterey.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Monterey already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Monterey ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-monterey.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Monterey' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-monterey.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-monterey.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Monterey' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-monterey.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Ventura - 13
-
-	if [ ${OPT} -eq 6 ]
-	then
-		clear
-		echo " "
-		echo "macOS Ventura"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-VENTURA]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}VENTURA"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "		
-			echo "Downloading and creating the recovery image for installation ..."
-			
-			LOGFILE=${LOGDIR}/crt-recovery-ventura.log
-
-			if [ ! -e ${ISODIR}/recovery-ventura.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-ventura.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-ventura.iso -n VENTURA >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-ventura.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-B4831CEBD52A0C4C -m 00000000000000000 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-ventura.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Ventura already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Ventura ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-ventura.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Cascadelake-Server,vendor=GenuineIntel,+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Ventura' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-ventura.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on/+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-ventura.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Ventura' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-ventura.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## macOS Sonoma - 14
-
-	if [ ${OPT} -eq 7 ]
-	then
-		clear
-		echo " "
-		echo "macOS Sonoma"
-		echo " "
-		echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
-		read VM_ID
-
-		if [ -z $VM_ID ]; then VM_ID=$NEXTID; fi;
-
-		echo " "
-		echo -n "Enter VM Name [or ENTER for Default: HACK-SONOMA]: "
-		read VM_NAME
-
-		if [ -z $VM_NAME ]; then VM_NAME="${DEFAULT_VM_PREFIX}SONOMA"; fi;
-
-		echo " "
-		echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
-		read SIZEDISK
-
-		if [ -z $SIZEDISK ]; then SIZEDISK=64; fi;
-		if ! [[ $SIZEDISK =~ $re ]] ; then echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"; exit; fi;
-
-		echo " "
-		echo "Storages available:"
-		echo " "
-		for stg in `pvesh get storage --noborder --noheader`
-		do
-			echo "     - ${stg}"
-		done
-		echo " "
-
-		echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
-		read STORAGECRTVM
-
-		if [ -z $STORAGECRTVM ]; then STORAGECRTVM="local-lvm"; fi;
-
-		echo " "
-		echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
-		read PROC_COUNT
-
-		if [ -z $PROC_COUNT ]; then PROC_COUNT=4; fi;
-
-		echo " "
-		echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
-		read RAM_SIZE
-
-		if [ -z $RAM_SIZE ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
-
-		echo " "
-		echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
-		read CRTRECODISK
-
-		if [ -z $CRTRECODISK ]; then CRTRECODISK="Y"; fi;
-		
-		if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]
-		then
-			echo  " "		
-			echo "Downloading and creating the recovery image for installation ..."
-			
-			LOGFILE=${LOGDIR}/crt-recovery-sonoma.log
-
-			if [ ! -e ${ISODIR}/recovery-sonoma.iso ]
-			then
-				fallocate -l 800M ${TMPDIR}/recovery-sonoma.iso > ${LOGFILE} 2>> ${LOGFILE}
-				mkfs.msdos -F 32 ${TMPDIR}/recovery-sonoma.iso -n SONOMA >> ${LOGFILE} 2>> ${LOGFILE}
-				LOOPDEV=`losetup -f --show ${TMPDIR}/recovery-sonoma.iso 2>> ${LOGFILE}`
-				mkdir -p /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				mount ${LOOPDEV} /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd /mnt/APPLE/ >> ${LOGFILE} 2>> ${LOGFILE}
-
-				python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py -b Mac-A61BADE1FDAD7B05 -m 00000000000000000 download >> ${LOGFILE} 2>> ${LOGFILE}
-
-				cd ${SCRIPT_DIR}
-
-				umount /mnt/APPLE >> ${LOGFILE} 2>> ${LOGFILE}
-				rmdir /mnt/APPLE
-				losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-
-				mv ${TMPDIR}/recovery-sonoma.iso ${ISODIR}
-
-				rm -rf ${TMPDIR}
-				echo "Download and recovery created successfully."
-			else
-				echo "Recovery image of macOS Sonoma already exists."
-			fi
-		else
-			echo " "
-			echo "Skipping download and creating recovery image ..."
-		fi
-
-		echo " "
-		echo "Creating virtual machine with macOS - Sonoma ..."
-
-		if [ ${OSX_PLATFORM} == 'AMD' ]
-		then
-
-			LOGFILE=${LOGDIR}/crt-vm-amd-sonoma.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Cascadelake-Server,vendor=GenuineIntel,+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Sonoma' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-sonoma.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on/+invtsc,-pcid,-hle,-rtm,-avx512f,-avx512dq,-avx512cd,-avx512bw,-avx512vl,-avx512vnni,kvm=on,vmware-cpuid-freq=on -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		if [ ${OSX_PLATFORM} == 'INTEL' ]
-		then
-			
-			LOGFILE=${LOGDIR}/crt-vm-intel-sonoma.log
-
-			qm create ${VM_ID} \
-			--agent 1 \
-			--args '-device isa-applesmc,osk="ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc' \
-			--autostart 0 \
-			--balloon 0 \
-			--bios ovmf \
-			--boot 'order=ide0;virtio0' \
-			--cores ${PROC_COUNT} \
-			--description ' Hackintosh VM - Sonoma' \
-			--efidisk0 ${STORAGECRTVM}:4 \
-			--machine q35 \
-			--memory ${RAM_SIZE} \
-			--name ${VM_NAME} \
-			--net0 vmxnet3,bridge=vmbr0 \
-			--numa 0 \
-			--onboot 0 \
-			--ostype other \
-			--sockets 1 \
-			--start 0 \
-			--tablet 1 \
-			--vga vmware \
-			--vmgenid 1 \
-			--scsihw virtio-scsi-pci \
-			--virtio0 ${STORAGECRTVM}:${SIZEDISK},cache=none,discard=on \
-			--ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
-			--ide2 local:iso/recovery-sonoma.iso,cache=unsafe,size=800M > ${LOGFILE} 2>> ${LOGFILE}
-
-			## Fix for QEMU 6.1 for PCI Passthrough
-			if [ `qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l` -eq 1 ]
-			then
-				sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/${VM_ID}.conf
-			fi
-
-		fi
-
-		echo "Virtual machine (${VM_NAME}) created successfully."
-		echo " "
-		echo "Access the Proxmox Web Panel to continue with the installation ..."
-		echo "https://`ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'`:8006"
-		echo " "
-		exit
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Add Promox VE NO Subscription repository
-	if [ ${OPT} -eq 200 ]
-	then
-
-		clear
-
-		LOGFILE=${LOGDIR}/add-repo-pve-no-subscription.log
-
-		echo " "
-		echo "Adding 'Promox VE NO Subscription repository' ..."
-		echo " "
-		echo "Please wait ..."
-		echo " "
-
-		if [`pveversion | grep "pve-manager/[7]" | wc -l` -ne 1]
-		then
-			echo "deb http://download.proxmox.com/debian/pve bullseye pve-no-subscription" > /etc/apt/sources.list.d/pxve-no-sub.list
-			apt update -y >> ${LOGFILE} 2>> ${LOGFILE}
-			if [ $? -ne 0 ]; then echo "apt update error - check log file ${LOGFILE}"; exit; fi;
-			echo "Promox VE NO Subscription repository has been successfully added."	
-			exit
-		fi
-
-		if [`pveversion | grep "pve-manager/[8]" | wc -l` -ne 1]
-		then
-			echo "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription" > /etc/apt/sources.list.d/pxve-no-sub.list
-			apt update -y >> ${LOGFILE} 2>> ${LOGFILE}
-			if [ $? -ne 0 ]; then echo "apt update error - check log file ${LOGFILE}"; exit; fi;
-			echo "Promox VE NO Subscription repository has been successfully added."	
-			exit
-		fi
-
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Update Opencore ISO
-
-	if [ ${OPT} -eq 201 ]
-	then
-
-		clear
-
-		LOGFILE=${LOGDIR}/update-opencore-iso.log
-
-		echo " "
-		echo "Copying 'opencore-osx-proxmox-vm.iso' to '/var/lib/vz/template/iso'"
-		echo " "
-
-		cd /var/lib/vz/template/iso/ > ${LOGFILE} 2>> ${LOGFILE}
-		rm -f opencore-osx-proxmox-vm.iso >> ${LOGFILE} 2>> ${LOGFILE}
-		wget https://github.com/luchina-gabriel/OSX-PROXMOX/raw/main/EFI/opencore-osx-proxmox-vm.iso >> ${LOGFILE} 2>> ${LOGFILE}
-		cd ~
-
-		echo "Please wait ..."
-		echo "Copy of 'opencore-osx-proxmox-vm.iso' completed!"
-		echo " "
-
-		exit
-
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Clear ALL macOS Recovery Images
-
-	if [ ${OPT} -eq 202 ]
-	then
-
-		clear
-
-		echo " "
-		echo "Clearing all macOS Recovery Images in '/var/lib/vz/template/iso'"
-		echo " "
-
-		rm -f /var/lib/vz/template/iso/recovery-*.iso
-		rm -f ${LOGDIR}/crt-recovery-*.log
-
-		echo "Please wait ..."
-		echo "Clear of ALL macOS Recovery Images completed!"
-		echo " "
-
-		exit
-
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Remove Proxmox Subscription Notice
-
-	if [ ${OPT} -eq 203 ]
-	then
-
-		clear
-
-		echo " "
-		echo "Removing Proxmox Subscription Notice..."
-		echo " "
-
-		sed -i.backup -z "s/res === null || res === undefined || \!res || res\n\t\t\t.data.status.toLowerCase() \!== 'active'/false/g" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js && systemctl restart pveproxy.service
-
-		echo "Please wait ..."
-		echo "Remove of Proxmox Subscription Notice completed!"
-		echo " "
-
-		exit
-
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Enable macOS in Cloud (VultR Provider)
-
-	if [ ${OPT} -eq 204 ]
-	then
-
-		clear
-
-		LOGFILE=${LOGDIR}/activate-macOS-in-cloud-vultr.log
-
-		echo " "
-		echo "Enabling macOS in Cloud (VultR Provider)"
-		echo " "
-		echo "Please wait ..."
-		echo " "
-
-		echo -e "\n## Interface for VMs \nauto vmbr1
-		iface vmbr1 inet static
-		        address  192.168.1.1
-		        netmask  255.255.255.0
-		        bridge_ports none
-		        bridge_stp off
-		        bridge_fd 0
-		\n        
-		post-up echo 1 > /proc/sys/net/ipv4/ip_forward
-		post-up   iptables -t nat -A POSTROUTING -s '192.168.1.0/24' -o vmbr0 -j MASQUERADE
-		post-down iptables -t nat -D POSTROUTING -s '192.168.1.0/24' -o vmbr0 -j MASQUERADE" >> /etc/network/interfaces
-
-		ifup vmbr1 >> ${LOGFILE} 2>> ${LOGFILE}
-
-		apt -y update >> ${LOGFILE} 2>> ${LOGFILE}
-		apt -y install sysstat net-tools isc-dhcp-server >> ${LOGFILE} 2>> ${LOGFILE}
-
-		sed -i 's/INTERFACESv4=""/INTERFACESv4="vmbr1"/g' /etc/default/isc-dhcp-server
-
-		cp /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.backup
-
-		echo 'subnet 192.168.1.0 netmask 255.255.255.0 {
-		  range 192.168.1.10 192.168.1.100;
-		  option routers 192.168.1.1;
-		  option subnet-mask 255.255.255.0;
-		  default-lease-time 600;
-		  max-lease-time 7200;
-		  ddns-update-style none;
-		  authoritative;
-		  option domain-name-servers 8.8.8.8,8.8.4.4;
-		  option domain-name "local";
-		}' > /etc/dhcp/dhcpd.conf
-
-		echo " "
-		echo "Enable of macOS in Cloud (VultR Provider) completed!"
-		echo " "
-		echo "Your server are reboot in 5s"
-
-		sleep 5s && reboot
-
-	fi
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Customize Opencore config.plist
-
-	if [ ${OPT} -eq 205 ]
-	then
-
-		clear
-
-		LOGFILE=${LOGDIR}/custom-oc-config.plist.log
-
-		echo " "
-		echo "Customize Opencore config.plist"
-		echo " "
-
-		LOOPDEV=`losetup -f --show -P ${ISODIR}/opencore-osx-proxmox-vm.iso 2>> ${LOGFILE}`
-
-		mkdir -p /mnt/opencore > ${LOGFILE} 2>> ${LOGFILE}
-		mount ${LOOPDEV}p1 /mnt/opencore >> ${LOGFILE} 2>> ${LOGFILE}
-
-		if [ ! -e /mnt/opencore/EFI/OC/config.plist.backup ]
-		then
-			cp -v /mnt/opencore/EFI/OC/config.plist /mnt/opencore/EFI/OC/config.plist.backup >> ${LOGFILE} 2>> ${LOGFILE}
-		fi
-
-		PREV_LANG=`grep -E '..-..:0' /mnt/opencore/EFI/OC/config.plist | sed -e 's/.*\(..-..\).*/\1/'`
-		BOOT_ARGS=`grep '<key>boot-args' /mnt/opencore/EFI/OC/config.plist -A1 | tail -n1 | sed -e 's/.*>\(.*\)<.*/\1/'`
-		TIMEOUT=`grep -A1 '>Timeout<' /mnt/opencore/EFI/OC/config.plist | tail -n1 | sed -e 's/.*>\(.*\)<.*/\1/'`
-
-		echo " "
-		echo -n "Enter language-country code [or ENTER to keep the current one (${PREV_LANG})]: "
-		read NEW_PREV_LANG
-		if [ -z ${NEW_PREV_LANG} ]; then NEW_PREV_LANG=${PREV_LANG}; fi;
-		sed -i -e "s/..-..:0/${NEW_PREV_LANG}:0/" /mnt/opencore/EFI/OC/config.plist >> ${LOGFILE} 2>> ${LOGFILE}
-
-		echo " "
-		echo -n "Enter boot-args [or ENTER to keep the current one (${BOOT_ARGS})]: "
-		read NEW_BOOT_ARGS
-		if [ -z "${NEW_BOOT_ARGS}" ]; then NEW_BOOT_ARGS=${BOOT_ARGS}; fi;
-		sed -i -e "s/${BOOT_ARGS}/${NEW_BOOT_ARGS}/" /mnt/opencore/EFI/OC/config.plist >> ${LOGFILE} 2>> ${LOGFILE}
-
-		echo " "
-		echo -n "Remove csr-active-config (unlock SIP configuration) [Y/N] [or ENTER for Default: N]: "
-		read RM_CSR_LOCK
-		if [ -z ${RM_CSR_LOCK} ]; then RM_CSR_LOCK="N"; fi;
-
-		if [ "${RM_CSR_LOCK}" == "Y" ] || [ "${RM_CSR_LOCK}" == "y" ]
-		then
-			echo "--- a/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:43:16.000000000 +0100
-+++ b/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:45:24.000000000 +0100
-@@ -450,2 +450,0 @@
--				<key>csr-active-config</key>
--				<data>AAAAAA==</data>
-" > ${TMPDIR}/rm-csr-lock.patch
-			cd /
-			patch -p1 < /root/OSX-PROXMOX/tmp/rm-csr-lock.patch >> ${LOGFILE} 2>> ${LOGFILE}
-			cd ${SCRIPT_DIR}
-			rm -f ${TMPDIR}/rm-csr-lock.patch
-			echo "Now you can use \`csrutil disable\` and \`csrutil authenticated-root disable\` in Recovery OS to disable SIP!"
-		fi
-
-		echo " "
-		echo -n "Enter timeout [or ENTER to keep the current one (${TIMEOUT} seconds)]: "
-		read NEW_TIMEOUT
-		if [ -z ${NEW_TIMEOUT} ]; then NEW_TIMEOUT=${TIMEOUT}; fi;
-
-		if [ ${NEW_TIMEOUT} -ne ${TIMEOUT} ]
-		then
-			echo "--- a/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:43:16.000000000 +0100
-+++ b/mnt/opencore/EFI/OC/config.plist	2023-01-25 22:45:24.000000000 +0100
-@@ -363,7 +363,7 @@
- 			<key>TakeoffDelay</key>
- 			<integer>0</integer>
- 			<key>Timeout</key>
--			<integer>${TIMEOUT}</integer>
-+			<integer>${NEW_TIMEOUT}</integer>
- 		</dict>
- 		<key>Debug</key>
- 		<dict>
-" > ${TMPDIR}/timeout.patch
-			cd /
-			patch -p1 < /root/OSX-PROXMOX/tmp/timeout.patch >> ${LOGFILE} 2>> ${LOGFILE}
-			cd ${SCRIPT_DIR}
-			rm -f ${TMPDIR}/timeout.patch
-		fi
-
-		diff -u --color /mnt/opencore/EFI/OC/config.plist.backup /mnt/opencore/EFI/OC/config.plist
-
-		umount /mnt/opencore >> ${LOGFILE} 2>> ${LOGFILE}
-		rmdir /mnt/opencore
-		losetup -d ${LOOPDEV} >> ${LOGFILE} 2>> ${LOGFILE}
-	fi
-
-	exit
-
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-################################################################################################################################################################################################
-
-	## Option for QUIT PROGRAM
-	if [ ${OPT} -eq 0 ]
-	then
-		exit
-	fi
 
+
+create_vm() {
+    clear
+    echo " "
+    echo "macOS $1"
+    echo " "
+    echo -n "Enter the VM ID [or ENTER to automatically generate (${NEXTID})]: "
+    read VM_ID
+
+    if [ -z "$VM_ID" ]; then VM_ID=$NEXTID; fi;
+
+    echo " "
+    echo -n "Enter VM Name [or ENTER for Default: HACK-$1]: "
+    read VM_NAME
+
+    if [ -z "$VM_NAME" ]; then VM_NAME="${DEFAULT_VM_PREFIX}$1"; fi;
+
+    echo " "
+    echo -n "Enter a disk size [INTEGER] [or ENTER for Default: 64 Gb]: "
+    read SIZEDISK
+
+    if [ -z "$SIZEDISK" ]; then SIZEDISK=64; fi;
+    if ! [[ $SIZEDISK =~ $re ]]; then
+        echo "ERROR! SIZEDISK MUST HAVE INTEGER NUMBER!"
+        exit
+    fi;
+
+    echo " "
+    echo "Storages available:"
+    echo " "
+    for stg in $(pvesh get storage --noborder --noheader); do
+        echo "     - ${stg}"
+    done
+    echo " "
+
+    echo -n "Enter which storage to create the VM [or ENTER for Default: local-lvm]: "
+    read STORAGECRTVM
+
+    if [ -z "$STORAGECRTVM" ]; then STORAGECRTVM="local-lvm"; fi;
+
+    echo " "
+    echo -n "Allocate CPU cores [Need Power of 2] [or ENTER for Default: 4]: "
+    read PROC_COUNT
+
+    if [ -z "$PROC_COUNT" ]; then PROC_COUNT=4; fi;
+
+    echo " "
+    echo -n "Allocate RAM [MiB] [or ENTER for Default: 4096]: "
+    read RAM_SIZE
+
+    if [ -z "$RAM_SIZE" ]; then RAM_SIZE=$DEFAULT_RAM_SIZE; fi;
+
+    echo " "
+    echo -n "Do you want to download and create the recovery image? [Y/N] [or ENTER for Default: Y]: "
+    read CRTRECODISK
+
+    if [ -z "$CRTRECODISK" ]; then CRTRECODISK="Y"; fi;
+
+if [ "${CRTRECODISK}" == "Y" ] || [ "${CRTRECODISK}" == "y" ]; then
+    echo " "
+    echo "Downloading and creating the recovery image for installation ..."
+
+    LOGFILE=${LOGDIR}/crt-recovery-$1.log
+
+    if [ ! -e ${ISODIR}/recovery-"$1".iso ]; then
+        fallocate -l 800M ${TMPDIR}/recovery-"$1".iso > "${LOGFILE}" 2>> "${LOGFILE}"
+        mkfs.msdos -F 32 ${TMPDIR}/recovery-"$1".iso -n "$1" >> "${LOGFILE}" 2>> "${LOGFILE}"
+        LOOPDEV=$(losetup -f --show ${TMPDIR}/recovery-"$1".iso 2>> "${LOGFILE}")
+        mkdir -p /mnt/APPLE >> "${LOGFILE}" 2>> "${LOGFILE}"
+        mount "${LOOPDEV}" /mnt/APPLE >> "${LOGFILE}" 2>> "${LOGFILE}"
+
+        cd /mnt/APPLE/ >> "${LOGFILE}" 2>> "${LOGFILE} || exit" || exit
+
+        # Use the associative array to fetch parameters
+        if [ -n "${macOS_params[$1]}" ]; then
+            PARAMS="${macOS_params[$1]}"
+        else
+            echo "Unsupported macOS version: $1"
+            exit 1
+        fi
+
+        python3 ${SCRIPT_DIR}/tools/macrecovery/macrecovery.py "${PARAMS}" >> "${LOGFILE}" 2>> "${LOGFILE}"
+
+        cd ${SCRIPT_DIR} || exit
+
+        umount /mnt/APPLE >> "${LOGFILE}" 2>> "${LOGFILE}"
+        rmdir /mnt/APPLE
+        losetup -d "${LOOPDEV}" >> "${LOGFILE}" 2>> "${LOGFILE}"
+
+        mv ${TMPDIR}/recovery-"$1".iso ${ISODIR}
+
+        rm -rf ${TMPDIR}
+        echo "Download and recovery created successfully."
+    else
+        echo "Recovery image of macOS $1 already exists."
+    fi
+else
+    echo " "
+    echo "Skipping download and creating recovery image ..."
+fi
+    echo " "
+    echo "Creating virtual machine with macOS - $1 ..."
+
+if [ ${OSX_PLATFORM} == 'AMD' ]; then
+    ARGS="-device isa-applesmc,osk=\"ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc\" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu Penryn,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+xsave,+xsaveopt,check"
+    LOGFILE=${LOGDIR}/crt-vm-amd-$1.log
+elif [ ${OSX_PLATFORM} == 'INTEL' ]; then
+    ARGS="-device isa-applesmc,osk=\"ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc\" -smbios type=2 -device usb-kbd,bus=ehci.0,port=2 -device usb-mouse,bus=ehci.0,port=3 -cpu host,kvm=on,vendor=GenuineIntel,+kvm_pv_unhalt,+kvm_pv_eoi,+hypervisor,+invtsc"
+    LOGFILE=${LOGDIR}/crt-vm-intel-$1.log
+else
+    echo "Unsupported platform: ${OSX_PLATFORM}"
+    exit 1
+fi
+
+    LOGFILE=${LOGDIR}/crt-vm-$1.log
+    qm create "${VM_ID}" \
+        --agent 1 \
+        --args "${ARGS}" \
+        --autostart 0 \
+        --balloon 0 \
+        --bios ovmf \
+        --boot 'order=ide0;sata0' \
+        --cores "${PROC_COUNT}" \
+        --description " Hackintosh VM - $1" \
+        --efidisk0 "${STORAGECRTVM}":4 \
+        --machine q35 \
+        --memory "${RAM_SIZE}" \
+        --name "${VM_NAME}" \
+        --net0 vmxnet3,bridge=vmbr0 \
+        --numa 0 \
+        --onboot 0 \
+        --ostype other \
+        --sockets 1 \
+        --start 0 \
+        --tablet 1 \
+        --vga vmware \
+        --vmgenid 1 \
+        --scsihw virtio-scsi-pci \
+        --sata0 "${STORAGECRTVM}":"${SIZEDISK}",cache=none,ssd=1,discard=on \
+        --ide0 local:iso/opencore-osx-proxmox-vm.iso,cache=unsafe,size=80M \
+        --ide2 local:iso/recovery-"$1".iso,cache=unsafe,size=800M > "${LOGFILE}" 2>> "${LOGFILE}"
+
+    # Fix for QEMU 6.1 for PCI Passthrough
+    if [ $(qemu-system-x86_64 --version | grep -e "6.1" -e "6.2" -e "7.1" -e "7.2" -e "8.0" | wc -l) -eq 1 ]; then
+        if [ ${OSX_PLATFORM} == 'AMD' ]; then
+            sed -i 's/+bmi2,+xsave,+xsaveopt,check/+bmi2,+xsave,+xsaveopt,check -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/"${VM_ID}".conf
+        elif [ ${OSX_PLATFORM} == 'INTEL' ]; then
+            sed -i 's/+kvm_pv_eoi,+hypervisor,+invtsc/+kvm_pv_eoi,+hypervisor,+invtsc -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off/g' /etc/pve/qemu-server/"${VM_ID}".conf
+        fi
+    fi
+
+
+    echo "Virtual machine (${VM_NAME}) created successfully."
+    echo " "
+    echo "Access the Proxmox Web Panel to continue with the installation ..."
+    echo "https://$(ip address show vmbr0 | grep -w "inet" | awk -F " " '{ print $2 }' | awk -F "/" '{ print $1 }'):8006"
+    echo " "
+    exit
+}
+
+# Menu options
+while [ true ]; do
+    NEXTID=$(pvesh get /cluster/nextid)
+
+    clear
+    echo "#######################################################"
+    echo "################ O S X - P R O X M O X ################"
+    echo "############### https://osx-proxmox.com ###############"
+    echo "################ version: ${HACKPXVERSION} ################"
+    echo "#######################################################"
+    echo " "
+    echo " Enter the macOS version to be installed:"
+    echo " "
+
+    for i in "${!menu_description[@]}"; do
+        echo "$((i+1)). ${menu_description[$i]}"
+    done
+
+    echo " "
+    echo " Next VM ID: ${NEXTID}"
+    echo " Opencore version: ${OCVERSION}"
+    echo " "
+    echo " 200 - Add Promox VE NO Subscription repository"
+    echo " 201 - Update Opencore ISO"
+    echo " 202 - Clear ALL macOS Recovery Images"
+    echo " 203 - Remove Proxmox Subscription Notice"
+    echo " 204 - Enable macOS in Cloud (VultR Provider)"
+    echo " 205 - Customize Opencore config.plist"
+    echo " "
+    echo " 0 - Quit (or press ENTER only)"
+    echo " "
+    echo -n " Option: "
+    read OPT
+
+    if [ -z "$OPT" ]; then
+        exit
+    fi
+
+    ## Regular Expression for check integer number in size disk
+    re='^[0-9]+$'
+
+    case "$OPT" in
+        [0-9]*)
+            if [ "$OPT" -eq 0 ]; then
+                exit
+            elif [ "$OPT" -le "${#menu_description[@]}" ]; then
+                selected_version="${macOS_versions[$((OPT-1))]}"
+                create_vm "$selected_version"
+            else
+                echo "Invalid option. Please choose a valid option."
+            fi
+            ;;
+        *)
+            echo "Invalid input. Please enter a number."
+            ;;
+    esac
 done
